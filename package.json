@@ -1,0 +1,15 @@
+{
+  "name": "icon-normalizer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI and TUI launcher for the image normalization tools",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node script/launcher.cjs tui",
+    "tui": "node script/launcher.cjs tui",
+    "normalize": "node script/launcher.cjs normalize",
+    "setup": "node script/launcher.cjs setup"
+  }
+}
