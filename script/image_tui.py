@@ -12,13 +12,14 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Input, RichLog, Static
 
-from image_core import Batch, Config, Result, discover, run_batch
+from image_core import Batch, Config, Result, discover, executable, run_batch
 from tui_completion import complete_prefix
 
 COMMANDS = {
     '/run': '开始处理，可追加文件或文件夹路径',
+    '/install-ai': '后台安装 AI 程序及模型，无需退出界面',
     '/scan': '扫描预览，可追加路径；不写入文件',
-    '/method': 'lanczos | waifu2x',
+    '/method': 'auto（默认） | lanczos | waifu2x',
     '/output': '输出目录；default 恢复默认',
     '/recursive': 'on | off；不填则切换',
     '/set': '高级设置：waifu2x / device / model-dir / fallback / timeout',
@@ -70,6 +71,7 @@ class NormalizeApp(App):
         super().__init__()
         self.config = replace(initial) if initial else Config(Path.cwd())
         self.busy = False
+        self.task_kind: str | None = None
         self.stop_event = threading.Event()
         self.history: list[str] = []
         self.history_position = 0
@@ -91,6 +93,12 @@ class NormalizeApp(App):
     def on_mount(self) -> None:
         self.update_context()
         self.write_log('输入路径并回车即可选择图片或文件夹。/scan 预览，/run 处理。')
+        self.write_log('auto：长边 <128px 的小位图用 waifu2x，其他用 Lanczos；SVG 直接渲染。')
+        if self.config.upscale != 'lanczos':
+            try:
+                executable(self.config)
+            except RuntimeError as exc:
+                self.write_log(f'提示：{exc}')
         self.write_log('原图保留 · 等比居中 · 透明补边。输入 /help 查看更多。')
         self.query_one('#prompt', Input).focus()
 
@@ -147,9 +155,16 @@ class NormalizeApp(App):
                 self.config.source = Path(argument).expanduser()
                 self.update_context()
             self.action_start() if command == '/run' else self.preview()
+        elif command == '/install-ai':
+            if argument:
+                raise ValueError('用法: /install-ai（无需参数）')
+            self.start_install()
+        elif command == '/setup':
+            self.write_log('  没有 /setup 安装命令。请在终端运行 npm run setup 安装 Python 依赖（不含 waifu2x）。')
+            self.write_log('  如需 AI，直接输入 /install-ai 后台安装；也可在系统终端运行 npm run setup:ai。')
         elif command == '/method':
-            if argument not in {'lanczos', 'waifu2x'}:
-                raise ValueError('用法: /method lanczos 或 /method waifu2x')
+            if argument not in {'auto', 'lanczos', 'waifu2x'}:
+                raise ValueError('用法: /method auto、/method lanczos 或 /method waifu2x')
             self.config.upscale = argument
             self.write_log(f'  放大方式 → {argument}')
             self.update_context()
@@ -239,13 +254,61 @@ class NormalizeApp(App):
             return
         self.stop_event = threading.Event()
         self.busy = True
+        self.task_kind = 'convert'
         self.query_one('#status', Static).update('正在处理…  Esc 停止')
         self.convert(config)
 
     def action_stop(self) -> None:
         if self.busy:
             self.stop_event.set()
-            self.query_one('#status', Static).update('正在停止… 等待当前解码 / AI 单轮结束（受超时限制）')
+            message = ('正在停止安装… 等待当前网络请求 / 解压结束后清理（网络超时 60 秒）'
+                       if self.task_kind == 'install' else '正在停止… 等待当前解码 / AI 单轮结束（受超时限制）')
+            self.query_one('#status', Static).update(message)
+
+    def start_install(self) -> None:
+        if self.busy:
+            return
+        self.stop_event = threading.Event()
+        self.busy = True
+        self.task_kind = 'install'
+        self.write_log('  正在后台安装官方 waifu2x 程序及模型；Esc 停止，Ctrl+C 安全停止并退出。')
+        self.query_one('#status', Static).update('AI 安装中… Esc 停止')
+        self.install_ai()
+
+    @work(thread=True, exclusive=True, group='install-ai')
+    def install_ai(self) -> None:
+        from install_waifu2x import InstallCancelled, main as install
+        error = None
+        cancelled = False
+        try:
+            def log(message, **_kwargs):
+                self.call_from_thread(self.write_log, f'  {message}')
+            code = install([], log=log, stop=self.stop_event)
+            if code != 0:
+                error = f'安装退出码 {code}'
+        except InstallCancelled:
+            cancelled = True
+        except Exception as exc:
+            error = str(exc)
+        self.call_from_thread(self.install_finished, error, cancelled)
+
+    def install_finished(self, error: str | None, cancelled: bool) -> None:
+        self.busy = False
+        self.task_kind = None
+        if cancelled:
+            message = 'AI 安装已停止，临时文件已清理；可再次 /install-ai'
+        elif error:
+            message = f'AI 安装失败: {error}；可再次 /install-ai 重试'
+        else:
+            message = 'AI 工具已准备好，无需重启；输入 /run 即可处理'
+            try:
+                executable(self.config)
+            except RuntimeError:
+                self.write_log('  提示：自定义 waifu2x 路径无效。/set waifu2x default 恢复自动查找，并检查 WAIFU2X_BIN。')
+        self.write_log(f'  {message}')
+        self.query_one('#status', Static).update(message)
+        if self.quit_requested:
+            self.exit()
 
     def completion_hint(self) -> str:
         preview = ' · '.join(self.completion_matches[:6])
@@ -321,6 +384,7 @@ class NormalizeApp(App):
 
     def finished(self, batch: Batch | None, error: str | None) -> None:
         self.busy = False
+        self.task_kind = None
         if error:
             self.write_log(f'  处理失败: {error}')
             self.query_one('#status', Static).update('处理失败，请查看记录')
@@ -340,6 +404,6 @@ class NormalizeApp(App):
         if self.busy:
             self.quit_requested = True
             self.action_stop()
-            self.write_log('  已请求安全停止，报告写入后自动退出')
+            self.write_log('  已请求安全停止，安装清理结束后自动退出' if self.task_kind == 'install' else '  已请求安全停止，报告写入后自动退出')
         else:
             self.exit()

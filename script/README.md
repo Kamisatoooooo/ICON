@@ -1,6 +1,8 @@
 # 图片标准化工具
 
-将单张图片或文件夹中的图片转换为 **144×144、RGBA PNG、96 DPI**。提供命令行和 Textual TUI，共用同一处理引擎。原图不会被覆盖，默认使用 Lanczos，可选 waifu2x NCNN/Vulkan。
+[返回项目首页](../README.md)
+
+将单张图片或文件夹中的图片转换为 **144×144、RGBA PNG、96 DPI**。提供命令行和 Textual TUI，共用同一处理引擎。原图不会被覆盖，默认使用 auto 自适应选择 Lanczos / waifu2x NCNN/Vulkan，也可手动指定。
 
 ## 1. 安装与启动
 
@@ -10,11 +12,14 @@
 # 首次安装 / 重建 Python 环境时执行
 npm run setup
 
+# 可选：安装 AI 超分程序和模型（Windows x64）
+npm run setup:ai
+
 # 打开 TUI
 npm start
 ```
 
-当前项目已有配置完成的 `script/.venv`，可直接运行 `npm start`。
+如果已完成初始化且 `script/.venv` 可用，后续可直接运行 `npm start`；更换设备或重新克隆仓库后，需要重新执行 `npm run setup`。
 
 - `npm run setup` 自动查找 Python 3.10+、创建项目内的 `script/.venv`，并安装运行依赖；不会修改全局 Python 环境。
 - 已有虚拟环境时，setup 复用它。首次安装依赖需要联网；平时 `npm start` 不会下载依赖或模型。
@@ -23,7 +28,7 @@ npm start
 - `npm run tui` 与 `npm start` 等效。向命令追加参数时使用 `--`。
 - 原 PowerShell 启动文件已移除。所有 npm 入口通过 Node 直接启动 Python，不调用 PowerShell。
 
-虚拟环境已被 Git 忽略，不随仓库分发。SVG 使用带预编译渲染器的 `resvg-py`，本次 Windows 环境无需另装 Cairo。
+虚拟环境已被 Git 忽略，不随仓库分发。SVG 使用 `resvg-py` 渲染，不走 CairoSVG 的转换路线。
 
 ### TUI 操作
 
@@ -31,7 +36,7 @@ npm start
 
 ```text
 ICON  /  图片标准化
-144×144 · PNG · 96 DPI · lanczos · 递归 关 · ...
+144×144 · PNG · 96 DPI · auto · 递归 关 · ...
 
 › group
   扫描到 45 张 · 输出 .../group/normalized
@@ -52,21 +57,22 @@ ICON  /  图片标准化
 - 支持在 `/run 路径`、`/scan 路径`、`/output 路径`、`/set waifu2x 路径` 和 `/set model-dir 路径` 中按 Tab 补全；输出和模型目录只补全文件夹。
 - 多项匹配时先补齐公共前缀，再连续按 Tab 循环选择候选；修改输入会重新查找。唯一文件夹补全后带目录分隔符，再按 Tab 可继续补全子项。空格路径会自动加引号，文件夹的光标保持在引号内便于继续输入。
 - `/scan [路径]`：扫描预览，不写入文件。
+- `/install-ai`：后台安装官方 AI 程序和配套模型，日志实时显示；安装后直接 `/run`，不用重启。安装与图片处理不能同时进行；Esc 安全停止并清理，Ctrl+C 清理后退出。停止可能等待当前网络请求（60 秒超时）或解压完成。
 - `/run [路径]`：开始处理当前输入，或指定新路径并处理。
-- `/method lanczos`、`/method waifu2x`：选择放大方式。
+- `/method auto`（默认）、`/method lanczos`、`/method waifu2x`：选择放大方式。
 - `/output 路径`：设置输出目录；`/output default` 恢复默认 `normalized`。
 - `/recursive on`、`/recursive off`：控制递归；只输入 `/recursive` 则切换。
 - `/status`：查看全部配置；`/help` 查看命令；`/clear` 清空记录。
 - 高级设置按需使用，例如 `/set waifu2x "D:\Tools\waifu2x.exe"`、`/set device cpu`、`/set model-dir "D:\Tools\models-cunet"`、`/set timeout 180`、`/set fallback on`。
 - AI 回退默认关闭，仅 `/set fallback on` 才允许失败后改用 Lanczos，且会记录原因。
 - `Ctrl+R` 开始；`Esc` 或 `/stop` 只停止任务，不退出。
-- `Ctrl+C` 或 `/quit` 退出，输入框有未提交内容时也可退出；任务运行期间先安全停止，报告写入后自动退出，无需再次按键。
+- `Ctrl+C` 或 `/quit` 退出，输入框有未提交内容时也可退出；任务运行期间先安全停止，处理报告写入或安装临时文件清理后自动退出，无需再次按键。
 - 停止需等待当前解码 / waifu2x 单轮调用完成；默认单轮超时 180 秒。已生成的成品保留，并写入报告。
 
 ## 2. 命令行示例
 
 ```sh
-# 单个文件，默认 Lanczos
+# 单个文件，默认 auto 自适应
 npm run normalize -- ".\airport\TAG.png"
 
 # 文件夹：默认不扫描子文件夹
@@ -87,9 +93,26 @@ npm run normalize -- --help
 
 npm 入口以仓库根目录为工作目录；相对输入、输出路径均以仓库根目录为基准。文件夹扫描按常见图片扩展名筛选；解码时识别实际格式，例如扩展名为 `.png` 的 JPEG。单文件输入不限制扩展名。
 
-## 3. waifu2x 可选配置
+## 3. 自适应模式与 waifu2x 配置
 
-**不自动下载模型或可执行程序，也不要求 CUDA/N 卡。** 使用官方 `nihui/waifu2x-ncnn-vulkan` 发行包，解压时保留程序与自带模型文件夹的相对位置。不同版本的设备支持可能不同；CPU 模式需使用支持 `-g -1` 的版本，GPU 模式依赖适用的 Vulkan 设备与驱动。
+默认 `auto`（CLI：`--upscale auto`；TUI：`/method auto`）：
+
+- 解码后位图的**长边小于 128px**，且需要放大到目标尺寸时使用 waifu2x。
+- 长边恰好为 128px 不走 AI；例如 100×100、48×48 使用 AI，128×128 使用 Lanczos。
+- 非正方形按长边判断：128×64 使用 Lanczos 并透明补边，不因短边不足而调用 AI。
+- 缩小使用 Lanczos，无需缩放则保持像素；SVG 直接按目标尺寸渲染。
+- `--upscale lanczos` 强制所有位图缩放使用 Lanczos；`--upscale waifu2x` 对所有需要放大的位图使用 AI。
+- auto 处理图片时不会自动安装 waifu2x。可预先运行 `npm run setup:ai`；需要 AI 但程序缺失或失败时，该文件会报错并提示安装命令，只有明确启用回退才改用 Lanczos。
+
+```sh
+# 默认 auto，指定 AI 程序（仅命中小图时调用）
+npm run normalize -- ".\group" --waifu2x "D:\Tools\waifu2x\waifu2x-ncnn-vulkan.exe"
+
+# 不使用 AI，也不需要安装 waifu2x
+npm run normalize -- ".\group" --upscale lanczos
+```
+
+**不要求 CUDA/N 卡，图片处理过程中不会自动下载。** Windows x64 可显式运行 `npm run setup:ai` 安装官方 `nihui/waifu2x-ncnn-vulkan` 最新稳定发行包及模型到 `script/tools/waifu2x/`；后续自动识别，无需指定路径。重复运行会复用完整安装，不自动升级或覆盖。其他系统仍可手动安装，解压时保留程序与自带模型文件夹的相对位置。不同版本的设备支持可能不同；CPU 模式需使用支持 `-g -1` 的版本，GPU 模式依赖适用的 Vulkan 设备与驱动。
 
 ```sh
 # 指定程序；自动选择设备
@@ -102,7 +125,7 @@ npm run normalize -- ".\group" --upscale waifu2x --waifu2x "D:\Tools\waifu2x\wai
 npm run normalize -- ".\group" --upscale waifu2x --waifu2x "D:\Tools\waifu2x\waifu2x-ncnn-vulkan.exe" --device 0 --model-dir "D:\Tools\waifu2x\models-cunet" --timeout 180
 ```
 
-程序查找优先级：`--waifu2x` → 环境变量 `WAIFU2X_BIN` → 系统 `PATH`。
+程序查找优先级：`--waifu2x` → 环境变量 `WAIFU2X_BIN` → 项目内 `script/tools/waifu2x/` → 系统 `PATH`。
 
 - 仅需要放大的位图调用 waifu2x；大图缩小仍用 Lanczos，SVG 直接渲染，不需要 waifu2x。
 - 默认不降噪，使用 `-n -1 -s 2`；必要时多轮 2 倍放大，最后缩放到内容目标尺寸。
@@ -141,6 +164,9 @@ PNG 以整数“每米像素数”保存密度，因此读回可能是 **96.012 
 - `image_core.py`：格式解码、缩放、waifu2x 调用、安全保存和报告。
 - `image_tui.py`：简洁输入式终端界面、斜杠命令、输入历史、后台任务和操作记录。
 - `tui_completion.py`：命令与文件系统路径补全，不经过 shell 解析。
-- `launcher.cjs`：无第三方 npm 依赖的启动器，负责环境初始化和 TUI / CLI 启动。
+- `launcher.cjs`：无第三方 npm 依赖的启动器，负责基础环境、AI 安装入口和 TUI / CLI 启动。
+- `install_waifu2x.py`：通过官方 GitHub Releases 安装 AI 程序和模型，验证下载大小、可用的官方 SHA256 及 ZIP 路径安全性；版本与摘要记录在安装目录。
 - 根目录 `package.json`：npm 命令定义。
 - `requirements.txt`：运行依赖。
+
+> **安装提示**：在系统终端运行 `npm run setup` 准备 Python 环境；需要 AI 再执行 `npm run setup:ai`（目前自动安装支持 Windows x64）。安装位置为 `script/tools/waifu2x/`，已被 Git 忽略，安装后自动识别。TUI 可直接输入 `/install-ai` 后台安装，日志实时显示，完成后无需重启即可 `/run`；缺失时会提示该命令。所有安装入口都不调用 PowerShell。

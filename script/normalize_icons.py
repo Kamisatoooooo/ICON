@@ -13,7 +13,8 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument('--tui', action='store_true', help='打开交互式终端界面')
     cli.add_argument('-o', '--output', type=Path, help='独立输出目录（默认：输入目录/normalized）')
     cli.add_argument('-r', '--recursive', action='store_true', help='递归扫描子目录，保留目录结构')
-    cli.add_argument('--upscale', choices=['lanczos', 'waifu2x'], default='lanczos')
+    cli.add_argument('--upscale', choices=['auto', 'lanczos', 'waifu2x'], default='auto',
+                     help='默认 auto：长边小于 128px 且需要放大的位图使用 waifu2x，其余使用 Lanczos')
     cli.add_argument('--waifu2x', help='waifu2x-ncnn-vulkan 可执行文件路径，也可设置 WAIFU2X_BIN')
     cli.add_argument('--device', default='auto', help='waifu2x 设备：auto、cpu 或 GPU 编号，例如 0')
     cli.add_argument('--model-dir', type=Path, help='可选的 waifu2x 模型文件夹；默认使用程序自带模型')

@@ -24,7 +24,7 @@ class Config:
     source: Path
     output: Path | None = None
     recursive: bool = False
-    upscale: str = 'lanczos'
+    upscale: str = 'auto'
     waifu2x: str | None = None
     device: str = 'auto'
     model_dir: Path | None = None
@@ -45,7 +45,7 @@ class Config:
             raise ValueError('输出目录不能与输入目录相同，请使用独立目录以保护原图')
         if self.output.exists() and not self.output.is_dir():
             raise ValueError('输出路径已经存在，且不是文件夹')
-        if self.upscale not in {'lanczos', 'waifu2x'}:
+        if self.upscale not in {'auto', 'lanczos', 'waifu2x'}:
             raise ValueError('未知放大方式')
         if self.size < 1 or self.dpi < 1 or not math.isfinite(self.timeout) or self.timeout <= 0:
             raise ValueError('尺寸、DPI 和超时时间必须为正数')
@@ -154,12 +154,23 @@ def decode(path: Path, target: int) -> tuple[Image.Image, str, list[str]]:
 
 
 def executable(config: Config) -> Path:
-    name = config.waifu2x or os.environ.get('WAIFU2X_BIN') or 'waifu2x-ncnn-vulkan'
+    local = Path(__file__).resolve().parent / 'tools' / 'waifu2x' / (
+        'waifu2x-ncnn-vulkan.exe' if os.name == 'nt' else 'waifu2x-ncnn-vulkan'
+    )
+    name = config.waifu2x or os.environ.get('WAIFU2X_BIN') or (
+        str(local) if local.is_file() else 'waifu2x-ncnn-vulkan'
+    )
     expanded = str(Path(name).expanduser())
     resolved = shutil.which(expanded)
     candidate = Path(resolved) if resolved else Path(expanded)
     if not candidate.is_file():
-        raise RuntimeError('未找到 waifu2x-ncnn-vulkan。请使用 --waifu2x 指定程序路径，或设置 WAIFU2X_BIN / PATH')
+        raise RuntimeError(
+            '未找到 waifu2x-ncnn-vulkan。TUI 输入 /install-ai，或在系统终端运行 npm run setup:ai '
+            '安装 AI 程序及模型（Windows x64），安装后自动识别，无需填写路径。'
+            'npm run setup 只准备 Python 依赖，处理过程中不会自动联网安装。'
+            '手动安装可通过 TUI 的 /set waifu2x "程序完整路径" 或 CLI 的 --waifu2x 配置。'
+            '暂不使用 AI 可选择 /method lanczos 或 --upscale lanczos。'
+        )
     return candidate.resolve()
 
 
@@ -237,7 +248,17 @@ def process_one(path: Path, config: Config, stop: threading.Event | None = None)
         target = fit_size(*image.size, config.size)
         result.content_size = target
         factor = max(target[0] / image.width, target[1] / image.height)
-        if kind != 'SVG' and factor > 1 and config.upscale == 'waifu2x':
+        # Use the longest edge: short sides of wide/tall icons are padded, not stretched.
+        use_ai = kind != 'SVG' and factor > 1 and (
+            config.upscale == 'waifu2x'
+            or (config.upscale == 'auto' and max(image.size) < 128)
+        )
+        if config.upscale == 'auto' and kind != 'SVG':
+            result.notes.append(
+                f'自动选择 {"waifu2x" if use_ai else "Lanczos / 保持尺寸"}；'
+                f'原图 {image.width}×{image.height}，长边小于 128px 且需要放大才使用 AI'
+            )
+        if use_ai:
             try:
                 content = waifu_upscale(image, target, config, stop)
                 result.method = 'waifu2x'

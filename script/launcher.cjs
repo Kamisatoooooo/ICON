@@ -69,7 +69,12 @@ function setup(args) {
   }
   const requirements = path.join(ROOT, 'script', 'requirements.txt');
   const status = execute(python, ['-X', 'utf8', '-m', 'pip', 'install', '-r', requirements]);
-  if (status === 0) console.log('\n环境已准备好。运行 npm start 打开 TUI。');
+  if (status === 0) {
+    console.log('\nPython 环境已准备好。运行 npm start 打开 TUI。');
+    console.log('注意：setup 不安装 waifu2x。默认 auto 遇到长边 <128px 的小位图会需要该程序。');
+    console.log('需要 AI 时运行 npm run setup:ai，安装后自动识别，无需填写路径（目前自动安装支持 Windows x64）。');
+    console.log('TUI 没有 /setup 安装命令；暂不使用 AI 可输入 /method lanczos。');
+  }
   return status;
 }
 
@@ -77,6 +82,11 @@ function main(argv = process.argv.slice(2)) {
   const [command = 'tui', ...args] = argv;
   try {
     if (command === 'setup') return setup(args);
+    if (command === 'setup-ai') {
+      const python = pythonPath();
+      const bootstrap = fs.existsSync(python) ? { executable: python, args: [] } : findBootstrapPython();
+      return execute(bootstrap.executable, [...bootstrap.args, '-X', 'utf8', path.join(ROOT, 'script', 'install_waifu2x.py'), ...args]);
+    }
     const launch = plan(command, args);
     if (!fs.existsSync(launch.executable)) {
       console.error('尚未创建项目 Python 环境。请先运行 npm run setup，再运行 npm start。');

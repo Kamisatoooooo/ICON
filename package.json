@@ -10,6 +10,7 @@
     "start": "node script/launcher.cjs tui",
     "tui": "node script/launcher.cjs tui",
     "normalize": "node script/launcher.cjs normalize",
-    "setup": "node script/launcher.cjs setup"
+    "setup": "node script/launcher.cjs setup",
+    "setup:ai": "node script/launcher.cjs setup-ai"
   }
 }
